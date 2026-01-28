@@ -7,6 +7,7 @@ import createHttpError from "http-errors";
 
 // import routes
 import routes from "./route/index.route.js";
+import fileUpload from "express-fileupload";
 
 dotenv.config();
 
@@ -31,7 +32,14 @@ app.use(cookieParser());
 app.use(fileUpload({ useTempFiles: true }));
 
 // cors
-app.use(cors({ origin: "http://localhost:5173", Credential: true }));
+app.use(
+  cors({
+    origin: "http://localhost:5173",
+    credentials: true,
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+  }),
+);
 
 // routes
 app.use("/api/v1", routes);
