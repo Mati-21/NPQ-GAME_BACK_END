@@ -1,3 +1,4 @@
+import UserModel from "../model/user.model.js";
 import { createUser, signInUser } from "../service/auth.service.js";
 import { createToken } from "../service/token.service.js";
 
@@ -40,6 +41,7 @@ export const login = async (req, res, next) => {
       maxAge: 1000 * 60 * 60,
     });
 
+    console.log("Hallo");
     res.status(200).json({ user });
   } catch (error) {
     next(error); // 🔥 THIS IS THE KEY
@@ -55,6 +57,19 @@ export const logout = (req, res) => {
   res.status(200).json({ message: "Logged out successfully" });
 };
 
-export const verifyUser = async (req, res, next) => {
-  res.status(200).json({ verifyUser: "True" });
+export const checkAuth = async (req, res, next) => {
+  try {
+    console.log("Star boy", req.userId);
+    const user = await UserModel.findById(req.userId).select("-password");
+
+    if (!user) {
+      return res.status(401).json({ message: "User not found" });
+    }
+
+    res.status(200).json({
+      user,
+    });
+  } catch (error) {
+    return res.status(401).json({ message: "Invalid or expired token" });
+  }
 };
