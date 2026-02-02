@@ -52,24 +52,7 @@ const UserSchema = new mongoose.Schema({
     },
   ],
 
-  // Friend requests system
-  friendRequests: [
-    {
-      user: {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: "User",
-      },
-      status: {
-        type: String,
-        enum: ["pending", "accepted", "rejected"],
-        default: "pending",
-      },
-      sentAt: {
-        type: Date,
-        default: Date.now,
-      },
-    },
-  ],
+ 
 
   stats: {
     totalGames: { type: Number, default: 0 },

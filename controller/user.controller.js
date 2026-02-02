@@ -20,3 +20,42 @@ export const getOnlineUsers = async (req, res) => {
     res.status(500).json({ message: "Server error" });
   }
 };
+
+export const searchUser = async (req, res) => {
+  console.log("search USers");
+  try {
+    const { q } = req.query;
+    console.log(q);
+
+    if (!q) {
+      return res.status(400).json({
+        success: false,
+        message: "Search query is required",
+      });
+    }
+
+    // 1️⃣ Search users from DB (NO online filter)
+    const users = await UserModel.find({
+      $or: [{ username: { $regex: q, $options: "i" } }],
+    }).select("-password");
+
+    // 2️⃣ Get online user IDs from socket memory
+    const onlineUserIds = Array.from(onlineUsers.keys());
+
+    // 3️⃣ Attach online status to each user
+    const usersWithStatus = users.map((user) => ({
+      ...user.toObject(),
+      isOnline: onlineUserIds.includes(user._id.toString()),
+    }));
+
+    res.status(200).json({
+      users: usersWithStatus,
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({
+      success: false,
+      message: "Server error",
+    });
+  }
+};
