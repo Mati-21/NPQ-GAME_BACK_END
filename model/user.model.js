@@ -48,11 +48,14 @@ const UserSchema = new mongoose.Schema({
   friends: [
     {
       type: mongoose.Schema.Types.ObjectId,
-      ref: "User",
+      ref: "UserModel",
     },
   ],
 
- 
+  friendRequests: {
+    sent: [{ type: mongoose.Schema.Types.ObjectId, ref: "UserModel" }],
+    received: [{ type: mongoose.Schema.Types.ObjectId, ref: "UserModel" }],
+  },
 
   stats: {
     totalGames: { type: Number, default: 0 },

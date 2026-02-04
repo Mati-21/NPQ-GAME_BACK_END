@@ -2,7 +2,6 @@ import mongoose from "mongoose";
 import app from "./app.js";
 import { createServer } from "http";
 
-
 import dotenv from "dotenv";
 import { Server } from "socket.io";
 import { socketHandler } from "./Socket/handlers/index.js";
@@ -33,6 +32,9 @@ const io = new Server(httpServer, {
     credentials: true, // important for cookies
   },
 });
+
+// 🔑 ATTACH IO HERE
+app.set("io", io);
 
 // Attach socket logic
 socketHandler(io);
