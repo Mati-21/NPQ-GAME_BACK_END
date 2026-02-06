@@ -18,7 +18,6 @@ export const sendFriendRequest = async (req, res, next) => {
     const sender = await UserModel.findById(senderId);
     const receiver = await UserModel.findById(receiverId);
 
-    
     // already friends?
     if (sender.friends.includes(receiverId)) {
       return res.status(400).json({ message: "Already friends" });
@@ -56,45 +55,65 @@ export const sendFriendRequest = async (req, res, next) => {
     next(error);
   }
 };
+
 export const acceptFriendRequest = async (req, res, next) => {
   try {
     const receiverId = req.userId; // the one accepting
     const senderId = req.params.userId;
 
+    // 1️⃣ Fetch both users
     const sender = await UserModel.findById(senderId);
     const receiver = await UserModel.findById(receiverId);
 
-    // remove from requests
-    receiver.friendRequests.received = receiver.friendRequests.received.filter(
-      (id) => id.toString() !== senderId,
-    );
+    if (!sender || !receiver) {
+      return res.status(404).json({ message: "User not found" });
+    }
 
-    sender.friendRequests.sent = sender.friendRequests.sent.filter(
-      (id) => id.toString() !== receiverId,
-    );
+    // 2️⃣ Remove from friend requests safely
+    receiver.friendRequests.received.pull(senderId);
+    sender.friendRequests.sent.pull(receiverId);
 
-    // add both to friends list
-    receiver.friends.push(senderId);
-    sender.friends.push(receiverId);
+    // 3️⃣ Add both to friends list if not already friends
+    if (!receiver.friends.includes(senderId)) receiver.friends.push(senderId);
+    if (!sender.friends.includes(receiverId)) sender.friends.push(receiverId);
 
-    sender.friendRequests.sent.push(receiverId);
-    receiver.friendRequests.received.push(senderId);
-
+    // 4️⃣ Save changes
     await receiver.save();
     await sender.save();
 
-    // 🔔 notify receiver
-    const receiverSocketId = onlineUsers.get(receiverId);
+    // 5️⃣ Notify receiver via socket (optional)
+    // const receiverSocketId = onlineUsers.get(receiverId);
+    // if (receiverSocketId && io) {
+    //   io.to(receiverSocketId).emit("friend-request", {
+    //     from: senderId,
+    //     type: "FRIEND_REQUEST_ACCEPTED",
+    //   });
+    // }
 
-    if (receiverSocketId) {
-      io.to(receiverSocketId).emit("friend-request", {
-        from: senderId,
-        type: "FRIEND_REQUEST",
-      });
-    }
-
-    res.json({ message: "Friend request accepted" });
+    res.json({ message: "Friend request accepted successfully" });
   } catch (error) {
     next(error);
+  }
+};
+
+export const Unfriend = async (req, res) => {
+  console.log("check check");
+  const userId = req.userId; // authenticated user
+  const friendId = req.params.friendId;
+
+  try {
+    // Remove friend from authenticated user
+    await UserModel.findByIdAndUpdate(userId, {
+      $pull: { friends: friendId },
+    });
+
+    // Remove authenticated user from friend's list
+    await UserModel.findByIdAndUpdate(friendId, {
+      $pull: { friends: userId },
+    });
+
+    res.status(200).json({ message: "Unfriended successfully", friendId });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
   }
 };

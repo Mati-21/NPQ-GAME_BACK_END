@@ -59,3 +59,92 @@ export const searchUser = async (req, res) => {
     });
   }
 };
+
+export const getAllUsers = async (req, res, next) => {
+  try {
+    const users = await UserModel.find({}).select("-password");
+    res.status(200).json({
+      Number_Of_Users: users.length,
+      users,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+import mongoose from "mongoose";
+
+export const getSomeUsers = async (req, res, next) => {
+  console.log("getsomeuser");
+
+  try {
+    const { usersId } = req.body;
+
+    // 1️⃣ Validate input
+    if (!usersId || !Array.isArray(usersId) || usersId.length === 0) {
+      return res.status(400).json({
+        error: "Please provide an array of user IDs",
+      });
+    }
+
+    // 2️⃣ Convert string IDs to ObjectId instances
+    const validIds = usersId
+      .filter((id) => mongoose.Types.ObjectId.isValid(id))
+      .map((id) => new mongoose.Types.ObjectId(id));
+
+    if (validIds.length === 0) {
+      return res.status(400).json({
+        error: "No valid user IDs provided",
+      });
+    }
+
+    // 3️⃣ Fetch users
+    const users = await UserModel.find({
+      _id: { $in: validIds },
+    }).select("-password");
+
+    // 4️⃣ Send response
+    res.status(200).json(users);
+  } catch (error) {
+    console.error("Error fetching users:", error);
+    next(error);
+  }
+};
+
+export const getFriends = async (req, res, next) => {
+  console.log(req.body);
+
+  try {
+    const { FriendsId } = req.body;
+    console.log("getFriends", FriendsId);
+
+    // 1️⃣ Validate input
+    if (!FriendsId || !Array.isArray(FriendsId) || FriendsId.length === 0) {
+      return res.status(400).json({
+        error: "Please provide an array of user IDs",
+      });
+    }
+
+    // 2️⃣ Convert string IDs to ObjectId instances
+    const validIds = FriendsId.filter((id) =>
+      mongoose.Types.ObjectId.isValid(id),
+    ).map((id) => new mongoose.Types.ObjectId(id));
+
+    if (validIds.length === 0) {
+      return res.status(400).json({
+        error: "No valid user IDs provided",
+      });
+    }
+
+    // 3️⃣ Fetch users
+    const users = await UserModel.find({
+      _id: { $in: validIds },
+    }).select("-password");
+
+    // 4️⃣ Send response
+    res.status(200).json(users);
+  } catch (error) {
+    console.error("Error fetching users:", error);
+    next(error);
+  }
+};
