@@ -28,15 +28,12 @@ app.use(express.urlencoded({ extended: true }));
 // cookie- parser
 app.use(cookieParser());
 
-//file upload
-app.use(fileUpload({ useTempFiles: true }));
-
 // cors
 app.use(
   cors({
     origin: "http://localhost:5173",
     credentials: true,
-    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
     allowedHeaders: ["Content-Type", "Authorization"],
   }),
 );
@@ -49,15 +46,20 @@ app.use((req, res, next) => {
   next(createHttpError.NotFound("This route does not exist"));
 });
 
-// General error handler
 app.use((err, req, res, next) => {
-  res.status(err.status || 500).json({
-    error: {
-      message: err.message || "Internal Error Server",
-      status: err.status || 500,
-    },
-  });
+  console.error("MULTER ERROR:", err); // <-- prints multer or other errors
+  res.status(500).json({ message: err.message });
 });
+
+// // General error handler
+// app.use((err, req, res, next) => {
+//   res.status(err.status || 500).json({
+//     error: {
+//       message: err.message || "Internal Error Server",
+//       status: err.status || 500,
+//     },
+//   });
+// });
 
 // exporting the app
 export default app;

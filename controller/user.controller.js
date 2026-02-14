@@ -1,5 +1,7 @@
 import UserModel from "../model/user.model.js";
 import { onlineUsers } from "../Socket/handlers/index.js";
+import bcrypt from "bcryptjs";
+import streamifier from "streamifier";
 
 export const getOnlineUsers = async (req, res) => {
   console.log("so");
@@ -73,6 +75,7 @@ export const getAllUsers = async (req, res, next) => {
 };
 
 import mongoose from "mongoose";
+import cloudinary from "../config/cloudinary.js";
 
 export const getSomeUsers = async (req, res, next) => {
   console.log("getsomeuser");
@@ -146,5 +149,90 @@ export const getFriends = async (req, res, next) => {
   } catch (error) {
     console.error("Error fetching users:", error);
     next(error);
+  }
+};
+
+// Upload image buffer to Cloudinary
+const uploadToCloudinary = async (buffer, folder) => {
+ 
+
+  console.log("Buffer length inside upload function:", buffer.length); // debug
+
+  return new Promise((resolve, reject) => {
+    const stream = cloudinary.uploader.upload_stream(
+      { folder },
+      (err, result) => {
+        if (err) reject(err);
+        else resolve(result);
+      },
+    );
+    streamifier.createReadStream(buffer).pipe(stream);
+  });
+};
+
+export const updateProfile = async (req, res) => {
+  try {
+    
+    const userId = req.userId;
+    const user = await UserModel.findById(req.userId);
+
+    if (!user) return res.status(404).json({ message: "User not found" });
+
+    const {
+      firstName,
+      lastName,
+      email,
+      birthDate,
+      bio,
+      aboutMe,
+      country,
+      region,
+      currentPassword,
+      newPassword,
+    } = req.body;
+
+    // --- Update password if provided ---
+    if (currentPassword && newPassword) {
+      const match = await bcrypt.compare(currentPassword, user.passwordHash);
+      if (!match)
+        return res.status(400).json({ message: "Incorrect current password" });
+
+      user.passwordHash = await bcrypt.hash(
+        newPassword,
+        await bcrypt.genSalt(10),
+      );
+    }
+       console.log(req.file);
+
+   
+
+    // --- Upload avatar if file exists ---
+    if (req.file) {
+      
+      const result = await uploadToCloudinary(
+        req.file.buffer,
+        `users/${user._id}/profile_pics`,
+      );
+      user.avatar = result.secure_url;
+    }
+
+    // --- Update basic fields ---
+    if (firstName) user.firstName = firstName;
+    if (lastName) user.lastName = lastName;
+    if (email) user.email = email;
+    if (birthDate) user.birthDate = birthDate;
+    if (bio) user.bio = bio;
+    if (aboutMe) user.aboutMe = aboutMe;
+    if (country) user.location.country = country;
+    if (region) user.location.region = region;
+
+    console.log("Last Step");
+
+    // Save and return
+    await user.save();
+    res.json({ message: "Profile updated successfully", user });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server error" });
   }
 };
