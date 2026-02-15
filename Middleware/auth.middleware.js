@@ -9,7 +9,7 @@ export const verifyToken = async (req, res, next) => {
     const decoded = await checkToken(token, process.env.TokenSecret);
 
     req.userId = decoded.userId;
-    console.log("token house");
+
     next();
   } catch (error) {
     return res.status(401).json({ message: "Invalid or expired token" });
