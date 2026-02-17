@@ -7,7 +7,6 @@ import createHttpError from "http-errors";
 
 // import routes
 import routes from "./route/index.route.js";
-import fileUpload from "express-fileupload";
 
 dotenv.config();
 
@@ -46,20 +45,16 @@ app.use((req, res, next) => {
   next(createHttpError.NotFound("This route does not exist"));
 });
 
+// General error handler
 app.use((err, req, res, next) => {
-  console.error("MULTER ERROR:", err); // <-- prints multer or other errors
-  res.status(500).json({ message: err.message });
+  console.error("ERROR:", err);
+  res.status(err.status || 500).json({
+    error: {
+      message: err.message || "Internal Error Server",
+      status: err.status || 500,
+    },
+  });
 });
-
-// // General error handler
-// app.use((err, req, res, next) => {
-//   res.status(err.status || 500).json({
-//     error: {
-//       message: err.message || "Internal Error Server",
-//       status: err.status || 500,
-//     },
-//   });
-// });
 
 // exporting the app
 export default app;
