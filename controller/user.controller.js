@@ -1,7 +1,9 @@
 import UserModel from "../model/user.model.js";
-import { onlineUsers } from "../Socket/handlers/index.js";
+
 import bcrypt from "bcryptjs";
 import streamifier from "streamifier";
+import mongoose from "mongoose";
+import cloudinary from "../config/cloudinary.js";
 
 export const getOnlineUsers = async (req, res) => {
   console.log("so");
@@ -24,12 +26,11 @@ export const getOnlineUsers = async (req, res) => {
 };
 
 export const searchUser = async (req, res) => {
-  console.log("search USers");
   try {
-    const { q } = req.query;
-    console.log(q);
+    const { query } = req.query;
+    console.log(query);
 
-    if (!q) {
+    if (!query) {
       return res.status(400).json({
         success: false,
         message: "Search query is required",
@@ -38,20 +39,20 @@ export const searchUser = async (req, res) => {
 
     // 1️⃣ Search users from DB (NO online filter)
     const users = await UserModel.find({
-      $or: [{ username: { $regex: q, $options: "i" } }],
+      $or: [{ username: { $regex: query, $options: "i" } }],
     }).select("-password");
 
     // 2️⃣ Get online user IDs from socket memory
-    const onlineUserIds = Array.from(onlineUsers.keys());
+    // const onlineUserIds = Array.from(onlineUsers.keys());
 
-    // 3️⃣ Attach online status to each user
-    const usersWithStatus = users.map((user) => ({
-      ...user.toObject(),
-      isOnline: onlineUserIds.includes(user._id.toString()),
-    }));
+    // // 3️⃣ Attach online status to each user
+    // const usersWithStatus = users.map((user) => ({
+    //   ...user.toObject(),
+    //   isOnline: onlineUserIds.includes(user._id.toString()),
+    // }));
 
     res.status(200).json({
-      users: usersWithStatus,
+      users
     });
   } catch (err) {
     console.error(err);
@@ -73,9 +74,6 @@ export const getAllUsers = async (req, res, next) => {
     next(error);
   }
 };
-
-import mongoose from "mongoose";
-import cloudinary from "../config/cloudinary.js";
 
 export const getSomeUsers = async (req, res, next) => {
   console.log("getsomeuser");
@@ -154,8 +152,6 @@ export const getFriends = async (req, res, next) => {
 
 // Upload image buffer to Cloudinary
 const uploadToCloudinary = async (buffer, folder) => {
- 
-
   console.log("Buffer length inside upload function:", buffer.length); // debug
 
   return new Promise((resolve, reject) => {
@@ -172,7 +168,6 @@ const uploadToCloudinary = async (buffer, folder) => {
 
 export const updateProfile = async (req, res) => {
   try {
-    
     const userId = req.userId;
     const user = await UserModel.findById(req.userId);
 
@@ -202,13 +197,10 @@ export const updateProfile = async (req, res) => {
         await bcrypt.genSalt(10),
       );
     }
-       console.log(req.file);
-
-   
+    console.log(req.file);
 
     // --- Upload avatar if file exists ---
     if (req.file) {
-      
       const result = await uploadToCloudinary(
         req.file.buffer,
         `users/${user._id}/profile_pics`,

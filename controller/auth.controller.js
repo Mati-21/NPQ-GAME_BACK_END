@@ -49,6 +49,7 @@ export const login = async (req, res, next) => {
 };
 
 export const logout = (req, res) => {
+  console.log("logout");
   res.clearCookie("Access_token", {
     httpOnly: true,
     sameSite: "strict",

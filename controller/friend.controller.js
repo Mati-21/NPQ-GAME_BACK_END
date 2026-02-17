@@ -1,14 +1,10 @@
 import UserModel from "../model/user.model.js";
-import { onlineUsers } from "../Socket/handlers/index.js";
 
 export const sendFriendRequest = async (req, res, next) => {
-  console.log("Hello venessa");
   try {
     const senderId = req.userId;
     const receiverId = req.params.userId;
-
-    console.log("sender", senderId);
-    console.log("reciever", receiverId);
+    const io = req.app.get("io");
 
     // check if the user is not sending the request to is self
     if (senderId === receiverId) {
@@ -27,6 +23,7 @@ export const sendFriendRequest = async (req, res, next) => {
     if (sender.friendRequests.sent.includes(receiverId)) {
       return res.status(400).json({ message: "Request already sent" });
     }
+
     // already sent?
     if (sender.friendRequests.received.includes(receiverId)) {
       return res
@@ -40,26 +37,26 @@ export const sendFriendRequest = async (req, res, next) => {
     await sender.save();
     await receiver.save();
 
-    // 🔔 notify receiver
-    const receiverSocketId = onlineUsers.get(receiverId);
+    const request = {
+      name: sender.firstName,
+      email: sender.email,
+      avater: sender.avatar,
+    };
 
-    if (receiverSocketId) {
-      io.to(receiverSocketId).emit("friend-request", {
-        from: senderId,
-        type: "FRIEND_REQUEST",
-      });
-    }
+    io.to(receiverId).emit("back", { senderId });
 
     res.json({ message: "Friend request sent" });
   } catch (error) {
     next(error);
   }
 };
+3;
 
 export const acceptFriendRequest = async (req, res, next) => {
   try {
     const receiverId = req.userId; // the one accepting
     const senderId = req.params.userId;
+    const io = req.app.get("io");
 
     // 1️⃣ Fetch both users
     const sender = await UserModel.findById(senderId);
@@ -82,13 +79,7 @@ export const acceptFriendRequest = async (req, res, next) => {
     await sender.save();
 
     // 5️⃣ Notify receiver via socket (optional)
-    // const receiverSocketId = onlineUsers.get(receiverId);
-    // if (receiverSocketId && io) {
-    //   io.to(receiverSocketId).emit("friend-request", {
-    //     from: senderId,
-    //     type: "FRIEND_REQUEST_ACCEPTED",
-    //   });
-    // }
+    io.to(senderId).emit("new-friend", { receiverId });
 
     res.json({ message: "Friend request accepted successfully" });
   } catch (error) {
@@ -97,9 +88,9 @@ export const acceptFriendRequest = async (req, res, next) => {
 };
 
 export const Unfriend = async (req, res) => {
-  console.log("check check");
   const userId = req.userId; // authenticated user
   const friendId = req.params.friendId;
+  const io = req.app.get("io");
 
   try {
     // Remove friend from authenticated user
@@ -111,6 +102,8 @@ export const Unfriend = async (req, res) => {
     await UserModel.findByIdAndUpdate(friendId, {
       $pull: { friends: userId },
     });
+
+    io.to(friendId).emit("unfriend", { userId });
 
     res.status(200).json({ message: "Unfriended successfully", friendId });
   } catch (err) {

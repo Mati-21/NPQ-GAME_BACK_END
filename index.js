@@ -3,8 +3,7 @@ import app from "./app.js";
 import { createServer } from "http";
 
 import dotenv from "dotenv";
-import { Server } from "socket.io";
-import { socketHandler } from "./Socket/handlers/index.js";
+import { initSocket } from "./config/socket.js";
 
 dotenv.config(); // load .env
 
@@ -24,24 +23,14 @@ mongoose.connection.on("error", (err) => console.log("DB error:", err));
 // ---------------------------
 // Start HTTP & Socket.IO server
 // ---------------------------
-const httpServer = createServer(app);
+const server = createServer(app);
 
-const io = new Server(httpServer, {
-  cors: {
-    origin: "http://localhost:3000", // your frontend origin
-    credentials: true, // important for cookies
-  },
-});
-
-// 🔑 ATTACH IO HERE
-app.set("io", io);
-
-// Attach socket logic
-socketHandler(io);
+// 🔥 Initialize socket
+initSocket(server, app);
 
 // ---------------------------
 // Start server
 // ---------------------------
-httpServer.listen(PORT, () => {
+server.listen(PORT, () => {
   console.log(`Server started on port ${PORT}`);
 });
