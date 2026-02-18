@@ -37,13 +37,9 @@ export const sendFriendRequest = async (req, res, next) => {
     await sender.save();
     await receiver.save();
 
-    const request = {
-      name: sender.firstName,
-      email: sender.email,
-      avater: sender.avatar,
-    };
+    io.to(receiverId).emit("new-notification", notification);
 
-    io.to(receiverId).emit("back", { senderId });
+    io.to(receiverId).emit("friend-request", { senderId });
 
     res.json({ message: "Friend request sent" });
   } catch (error) {
