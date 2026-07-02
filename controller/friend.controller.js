@@ -37,8 +37,6 @@ export const sendFriendRequest = async (req, res, next) => {
     await sender.save();
     await receiver.save();
 
-    io.to(receiverId).emit("new-notification", notification);
-
     io.to(receiverId).emit("friend-request", { senderId });
 
     res.json({ message: "Friend request sent" });
@@ -46,7 +44,6 @@ export const sendFriendRequest = async (req, res, next) => {
     next(error);
   }
 };
-3;
 
 export const acceptFriendRequest = async (req, res, next) => {
   try {
@@ -106,3 +103,57 @@ export const Unfriend = async (req, res) => {
     res.status(500).json({ message: err.message });
   }
 };
+
+export const cancelFriendRequest = async (req, res, next) => {
+  try {
+    const senderId = req.userId;
+    const receiverId = req.params.userId;
+
+    await UserModel.findByIdAndUpdate(senderId, {
+      $pull: { "friendRequests.sent": receiverId },
+    });
+    await UserModel.findByIdAndUpdate(receiverId, {
+      $pull: { "friendRequests.received": senderId },
+    });
+
+    const io = req.app.get("io");
+    if (io) {
+      io.to(receiverId).emit("cancel-friend-request", { senderId });
+    }
+
+    res.json({ message: "Friend request cancelled" });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const rejectFriendRequest = async (req, res, next) => {
+  try {
+    const receiverId = req.userId;
+    const senderId = req.params.userId;
+    const io = req.app.get("io");
+
+    const sender = await UserModel.findById(senderId);
+    const receiver = await UserModel.findById(receiverId);
+
+    if (!sender || !receiver) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    receiver.friendRequests.received.pull(senderId);
+    sender.friendRequests.sent.pull(receiverId);
+
+    await receiver.save();
+    await sender.save();
+
+    if (io) {
+      io.to(senderId).emit("reject-friend-request", { receiverId });
+    }
+
+    res.json({ message: "Friend request rejected" });
+  } catch (error) {
+    next(error);
+  }
+};
+
+
