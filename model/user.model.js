@@ -181,6 +181,7 @@ const UserSchema = new mongoose.Schema({
     level: { type: Number, default: 1 },
     experience: { type: Number, default: 0 },
     achievements: [{ type: String }],
+    points: { type: Number, default: 0 },
   },
 
   // Game preferences
@@ -390,6 +391,7 @@ UserSchema.statics.updateStats = async function (userId, statsUpdate) {
     "bestWinStreak",
     "experience",
     "rating",
+    "points",
   ];
 
   return await this.findByIdAndUpdate(

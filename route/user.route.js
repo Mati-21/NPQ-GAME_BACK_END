@@ -7,6 +7,7 @@ import {
   getSomeUsers,
   searchUser,
   updateProfile,
+  getTopPlayers,
 } from "../controller/user.controller.js";
 import upload from "../Middleware/upload.middleware.js";
 
@@ -17,8 +18,10 @@ router.route("/searchuser").get(verifyToken, searchUser);
 router.route("/getAllUsers").get(verifyToken, getAllUsers);
 router.route("/getSomeUsers").post(verifyToken, getSomeUsers);
 router.route("/getFriends").post(verifyToken, getFriends);
+router.route("/top-players").get(verifyToken, getTopPlayers);
 router
   .route("/updateProfile")
   .patch(verifyToken, upload.single("avatar"), updateProfile);
 
 export default router;
+

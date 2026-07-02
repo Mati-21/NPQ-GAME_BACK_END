@@ -4,6 +4,9 @@ import bcrypt from "bcryptjs";
 import streamifier from "streamifier";
 import mongoose from "mongoose";
 import cloudinary from "../config/cloudinary.js";
+import fs from "fs";
+import path from "path";
+
 
 export const getOnlineUsers = async (req, res) => {
   console.log("so");
@@ -199,13 +202,17 @@ export const updateProfile = async (req, res) => {
     }
     console.log(req.file);
 
-    // --- Upload avatar if file exists ---
+    // --- Upload avatar if file exists (save to local folder) ---
     if (req.file) {
-      const result = await uploadToCloudinary(
-        req.file.buffer,
-        `users/${user._id}/profile_pics`,
-      );
-      user.avatar = result.secure_url;
+      const ext = path.extname(req.file.originalname);
+      const filename = `${user._id}_${Date.now()}${ext}`;
+      const uploadDir = path.join(process.cwd(), "uploads");
+      if (!fs.existsSync(uploadDir)) {
+        fs.mkdirSync(uploadDir, { recursive: true });
+      }
+      const filePath = path.join(uploadDir, filename);
+      fs.writeFileSync(filePath, req.file.buffer);
+      user.avatar = `${req.protocol}://${req.get("host")}/uploads/${filename}`;
     }
 
     // --- Update basic fields ---
@@ -228,3 +235,20 @@ export const updateProfile = async (req, res) => {
     res.status(500).json({ message: "Server error" });
   }
 };
+
+export const getTopPlayers = async (req, res, next) => {
+  try {
+    const players = await UserModel.find({ "stats.points": { $gt: 0 } })
+      .sort({ "stats.points": -1 })
+      .limit(5)
+      .select("_id username email firstName lastName avatar stats");
+
+    res.status(200).json({
+      success: true,
+      players,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
