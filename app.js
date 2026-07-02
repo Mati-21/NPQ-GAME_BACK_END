@@ -5,6 +5,8 @@ import morgan from "morgan";
 import cors from "cors";
 import createHttpError from "http-errors";
 
+import path from "path";
+
 // import routes
 import routes from "./route/index.route.js";
 
@@ -37,8 +39,12 @@ app.use(
   }),
 );
 
+// Serve local uploads folder
+app.use("/uploads", express.static(path.join(process.cwd(), "uploads")));
+
 // routes
 app.use("/api/v1", routes);
+
 
 // handle un reached route or page that did not exist
 app.use((req, res, next) => {
