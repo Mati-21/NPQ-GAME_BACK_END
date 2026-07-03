@@ -3,8 +3,8 @@ import { createUser, signInUser } from "../service/auth.service.js";
 import { createToken } from "../service/token.service.js";
 
 export const Register = async (req, res, next) => {
-  const { username, email, password, name } = req.body;
-  const user = await createUser(username, email, password, name);
+  const { username, email, password, firstName, lastName } = req.body;
+  const user = await createUser(username, email, password, firstName, lastName);
 
   const token = await createToken(
     { userId: user._id },

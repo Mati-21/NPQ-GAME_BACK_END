@@ -1,4 +1,5 @@
 import UserModel from "../model/user.model.js";
+import NotificationModel from "../model/notification.model.js";
 
 export const sendFriendRequest = async (req, res, next) => {
   try {
@@ -37,7 +38,23 @@ export const sendFriendRequest = async (req, res, next) => {
     await sender.save();
     await receiver.save();
 
+    // Create and save a notification in the database
+    let populatedNotification = null;
+    try {
+      const notification = await NotificationModel.create({
+        recipient: receiverId,
+        sender: senderId,
+        type: "friend_request",
+      });
+      populatedNotification = await notification.populate("sender", "username avatar firstName lastName");
+    } catch (err) {
+      console.error("Error creating friend request notification:", err);
+    }
+
     io.to(receiverId).emit("friend-request", { senderId });
+    if (populatedNotification) {
+      io.to(receiverId).emit("new-notification", populatedNotification);
+    }
 
     res.json({ message: "Friend request sent" });
   } catch (error) {
@@ -71,8 +88,24 @@ export const acceptFriendRequest = async (req, res, next) => {
     await receiver.save();
     await sender.save();
 
+    // Create and save a notification in the database
+    let populatedNotification = null;
+    try {
+      const notification = await NotificationModel.create({
+        recipient: senderId,
+        sender: receiverId,
+        type: "friend_accept",
+      });
+      populatedNotification = await notification.populate("sender", "username avatar firstName lastName");
+    } catch (err) {
+      console.error("Error creating friend accept notification:", err);
+    }
+
     // 5️⃣ Notify receiver via socket (optional)
     io.to(senderId).emit("new-friend", { receiverId });
+    if (populatedNotification) {
+      io.to(senderId).emit("new-notification", populatedNotification);
+    }
 
     res.json({ message: "Friend request accepted successfully" });
   } catch (error) {

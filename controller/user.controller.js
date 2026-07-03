@@ -238,7 +238,7 @@ export const updateProfile = async (req, res) => {
 
 export const getTopPlayers = async (req, res, next) => {
   try {
-    const players = await UserModel.find({ "stats.points": { $gt: 0 } })
+    const players = await UserModel.find({})
       .sort({ "stats.points": -1 })
       .limit(5)
       .select("_id username email firstName lastName avatar stats");

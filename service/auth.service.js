@@ -3,23 +3,26 @@ import validator from "validator";
 import UserModel from "../model/user.model.js";
 import bcrypt from "bcryptjs";
 
-export const createUser = async (username, email, password, name) => {
+export const createUser = async (username, email, password, firstName, lastName) => {
   // 1. Required fields
-  if (!username || !name || !email || !password) {
+  if (!username || !firstName || !lastName || !email || !password) {
     throw createHttpError.BadRequest("Please fill all required fields");
   }
 
   // 2. Name validation
-  if (!/^[a-zA-Z\s-]+$/.test(name)) {
-    throw createHttpError.BadRequest(
-      "Name should not contain special characters",
-    );
+  const nameRegex = /^[a-zA-Z\s-]+$/;
+  if (!nameRegex.test(firstName)) {
+    throw createHttpError.BadRequest("First name should not contain special characters");
+  }
+  if (!nameRegex.test(lastName)) {
+    throw createHttpError.BadRequest("Last name should not contain special characters");
   }
 
-  if (!validator.isLength(name, { min: 2, max: 20 })) {
-    throw createHttpError.BadRequest(
-      "Name must be between 2 and 20 characters long",
-    );
+  if (!validator.isLength(firstName, { min: 2, max: 50 })) {
+    throw createHttpError.BadRequest("First name must be between 2 and 50 characters long");
+  }
+  if (!validator.isLength(lastName, { min: 2, max: 50 })) {
+    throw createHttpError.BadRequest("Last name must be between 2 and 50 characters long");
   }
 
   // 3. Email validation
@@ -29,9 +32,7 @@ export const createUser = async (username, email, password, name) => {
 
   // 4. Password validation
   if (!validator.isLength(password, { min: 6 })) {
-    throw createHttpError.BadRequest(
-      "Password must be at least 6 characters long",
-    );
+    throw createHttpError.BadRequest("Password must be at least 6 characters long");
   }
 
   // 5. Check if user exists
@@ -40,9 +41,7 @@ export const createUser = async (username, email, password, name) => {
   });
 
   if (userExists) {
-    throw createHttpError.Conflict(
-      "User with this email or username already exists",
-    );
+    throw createHttpError.Conflict("User with this email or username already exists");
   }
 
   // 6. Hash password
@@ -51,7 +50,8 @@ export const createUser = async (username, email, password, name) => {
   // 7. Create user
   const user = await UserModel.create({
     username,
-    name,
+    firstName,
+    lastName,
     email,
     passwordHash: hashedPassword,
   });

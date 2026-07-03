@@ -1,8 +1,12 @@
 import GameHistory from "../model/gameHistory.model.js";
 import User from "../model/user.model.js";
+import NotificationModel from "../model/notification.model.js";
 
 const onlineUsers = new Map();
 const activeGames = new Map();
+// lobbyStates tracks which players have locked in their number before their opponent joins
+// key: sorted "userId1-userId2", value: Set of userIds who are ready
+const lobbyStates = new Map();
 
 /**
  * Game state structure:
@@ -14,7 +18,7 @@ const activeGames = new Map();
  *  - responses: [{ responderId, guess, place, qty, forPlayerId }]
  *  - guessingTimer / responseTimer: minutes configured by host
  */
-const buildGameState = (hostId, guestId, guessingTimer, responseTimer) => ({
+const buildGameState = (hostId, guestId, guessingTimer, responseTimer, autoCheck) => ({
   hostId,
   guestId,
   startedAt: new Date(),
@@ -24,12 +28,128 @@ const buildGameState = (hostId, guestId, guessingTimer, responseTimer) => ({
   pendingGuessFor: null,     // set when a guess is submitted
   guessingTimer: Number(guessingTimer) || 3,
   responseTimer: Number(responseTimer) || 3,
+  autoCheck: Boolean(autoCheck),
   guesses: [],
   responses: [],
   winner: null,
   loser: null,
   reason: null,
+  isDraw: false,
+  chat: [],
 });
+
+const clearServerTimer = (game) => {
+  if (game && game.timerId) {
+    clearTimeout(game.timerId);
+    game.timerId = null;
+  }
+};
+
+const checkRoundEnd = (io, game, gameId) => {
+  const hostGuesses = game.guesses.filter((g) => g.playerId === String(game.hostId)).length;
+  const guestGuesses = game.guesses.filter((g) => g.playerId === String(game.guestId)).length;
+
+  if (hostGuesses === guestGuesses) {
+    const hasHostGuessedCorrect = game.guesses.some(
+      (g) =>
+        String(g.playerId) === String(game.hostId) &&
+        String(g.guess).trim() === String(game.guestSecretNumber || "").trim()
+    );
+    const hasGuestGuessedCorrect = game.guesses.some(
+      (g) =>
+        String(g.playerId) === String(game.guestId) &&
+        String(g.guess).trim() === String(game.hostSecretNumber || "").trim()
+    );
+
+    if (hasHostGuessedCorrect || hasGuestGuessedCorrect) {
+      clearServerTimer(game);
+      game.status = "finished";
+
+      let resultPayload;
+      if (hasHostGuessedCorrect && hasGuestGuessedCorrect) {
+        game.isDraw = true;
+        game.reason = "draw";
+        resultPayload = {
+          winnerId: null,
+          loserId: null,
+          isDraw: true,
+          reason: "draw",
+          pointsAwarded: 0,
+        };
+      } else if (hasHostGuessedCorrect) {
+        game.winner = String(game.hostId);
+        game.loser = String(game.guestId);
+        game.reason = "guess";
+        resultPayload = {
+          winnerId: game.winner,
+          loserId: game.loser,
+          reason: "guess",
+          pointsAwarded: 3,
+        };
+      } else {
+        game.winner = String(game.guestId);
+        game.loser = String(game.hostId);
+        game.reason = "guess";
+        resultPayload = {
+          winnerId: game.winner,
+          loserId: game.loser,
+          reason: "guess",
+          pointsAwarded: 3,
+        };
+      }
+
+      io.to(game.hostId.toString()).emit("game-result", resultPayload);
+      io.to(game.guestId.toString()).emit("game-result", resultPayload);
+
+      activeGames.delete(gameId);
+      void persistGameResult(game);
+      return true;
+    }
+  }
+  return false;
+};
+
+const startServerTimer = (io, gameId) => {
+  const game = activeGames.get(gameId);
+  if (!game || game.status !== "active") return;
+
+  clearServerTimer(game);
+
+  const durationMinutes = game.phase === "guess" ? game.guessingTimer : game.responseTimer;
+  const durationMs = durationMinutes * 60 * 1000;
+
+  game.timerId = setTimeout(() => {
+    triggerForfeit(io, gameId, game.currentTurn);
+  }, durationMs);
+};
+
+const triggerForfeit = (io, gameId, playerId) => {
+  const game = activeGames.get(gameId);
+  if (!game || game.status !== "active") return;
+
+  clearServerTimer(game);
+
+  const opponentId =
+    String(playerId) === String(game.hostId) ? game.guestId : game.hostId;
+
+  game.status = "finished";
+  game.winner = String(opponentId);
+  game.loser = String(playerId);
+  game.reason = "timeout";
+
+  const resultPayload = {
+    winnerId: game.winner,
+    loserId: game.loser,
+    reason: "timeout",
+    pointsAwarded: 3,
+  };
+
+  io.to(game.hostId.toString()).emit("game-result", resultPayload);
+  io.to(game.guestId.toString()).emit("game-result", resultPayload);
+
+  activeGames.delete(gameId);
+  void persistGameResult(game);
+};
 
 export const registerSocketHandlers = (io) => {
   io.on("connection", (socket) => {
@@ -45,11 +165,24 @@ export const registerSocketHandlers = (io) => {
     // ────────────────────────────────────────────────
     // Lobby events
     // ────────────────────────────────────────────────
-    socket.on("send-game-request", ({ toUserId, fromUser }) => {
+    socket.on("send-game-request", async ({ toUserId, fromUser }) => {
       io.to(toUserId.toString()).emit("game-request", {
         fromUser,
         requestId: `${socket.userId}-${toUserId}-${Date.now()}`,
       });
+
+      // Save game request notification to database
+      try {
+        const notification = await NotificationModel.create({
+          recipient: toUserId,
+          sender: socket.userId,
+          type: "Game_request",
+        });
+        const populatedNotification = await notification.populate("sender", "username avatar firstName lastName");
+        io.to(toUserId.toString()).emit("new-notification", populatedNotification);
+      } catch (err) {
+        console.error("Error creating game request notification:", err);
+      }
     });
 
     socket.on("accept-game-request", ({ toUserId, requestId, acceptedBy }) => {
@@ -67,11 +200,54 @@ export const registerSocketHandlers = (io) => {
     });
 
     socket.on("player-ready", ({ toUserId }) => {
+      // Store ready state so late-joining opponents can catch up
+      const lobbyKey = [socket.userId, toUserId].sort().join("-");
+      if (!lobbyStates.has(lobbyKey)) lobbyStates.set(lobbyKey, new Set());
+      lobbyStates.get(lobbyKey).add(String(socket.userId));
+
       io.to(toUserId.toString()).emit("opponent-ready");
     });
 
     socket.on("player-not-ready", ({ toUserId }) => {
+      // Clear ready state
+      const lobbyKey = [socket.userId, toUserId].sort().join("-");
+      if (lobbyStates.has(lobbyKey)) {
+        lobbyStates.get(lobbyKey).delete(String(socket.userId));
+      }
+
       io.to(toUserId.toString()).emit("opponent-not-ready");
+    });
+
+    // ── Called when a player mounts the lobby page ──
+    // Replays the current ready state to the joining socket so late joiners
+    // immediately see whether their opponent has already locked in.
+    // Also notifies the existing player that their opponent has arrived.
+    socket.on("join-lobby", ({ opponentId }) => {
+      const lobbyKey = [socket.userId, opponentId].sort().join("-");
+      const readySet = lobbyStates.get(lobbyKey);
+      if (readySet && readySet.has(String(opponentId))) {
+        // Opponent already ready — tell the just-joined player
+        socket.emit("opponent-ready");
+      }
+      // Tell the existing player that their opponent has entered the lobby
+      io.to(opponentId.toString()).emit("opponent-joined-lobby");
+    });
+
+    // ── Called when a player intentionally exits the lobby ──
+    // Notifies the opponent so they can update the UI.
+    // If the leaving player was the HOST (original game-request sender),
+    // the opponent also removes any pending game request from that user.
+    socket.on("leave-lobby", ({ opponentId, isHost }) => {
+      // Remove this player's ready state from the shared lobby entry
+      const lobbyKey = [socket.userId, opponentId].sort().join("-");
+      if (lobbyStates.has(lobbyKey)) {
+        lobbyStates.get(lobbyKey).delete(String(socket.userId));
+      }
+      // Notify the opponent
+      io.to(opponentId.toString()).emit("opponent-left-lobby", {
+        wasHost: isHost,           // true → opponent should also remove pending game request
+        leavingUserId: socket.userId,
+      });
     });
 
     // ────────────────────────────────────────────────
@@ -79,7 +255,7 @@ export const registerSocketHandlers = (io) => {
     // ────────────────────────────────────────────────
     socket.on(
       "start-game-session",
-      ({ hostId, guestId, secretNumber, guessingTimer, responseTimer }) => {
+      ({ hostId, guestId, secretNumber, guessingTimer, responseTimer, autoCheck }) => {
         // Only the host socket may start the game
         if (String(socket.userId) !== String(hostId)) {
           socket.emit("start-game-error", {
@@ -104,10 +280,16 @@ export const registerSocketHandlers = (io) => {
           return;
         }
 
-        const game = buildGameState(hostId, guestId, guessingTimer, responseTimer);
+        const game = buildGameState(hostId, guestId, guessingTimer, responseTimer, autoCheck);
         // Store the host's secret number so we can check when guest guesses
         game.hostSecretNumber = String(secretNumber || "").trim();
         activeGames.set(sessionKey, game);
+
+        // Clean up lobby ready-state since game is now starting
+        lobbyStates.delete(sessionKey);
+
+        // Start the server-side turn timer!
+        startServerTimer(io, sessionKey);
 
         // Payload sent to BOTH players so they can sync timers and initial state
         const sharedPayload = {
@@ -119,6 +301,7 @@ export const registerSocketHandlers = (io) => {
           latestResponse: null,
           guessingTimer: game.guessingTimer,
           responseTimer: game.responseTimer,
+          autoCheck: game.autoCheck,
         };
 
         // Tell each player their role
@@ -151,12 +334,6 @@ export const registerSocketHandlers = (io) => {
       }
 
       const normalizedGuess = String(guess).trim();
-
-      // Check win: compare against the OPPONENT's secret number.
-      // We only store host's secret; guest's secret must be stored when submitted.
-      // Win detection: the guesser is trying to guess the OPPONENT's number.
-      // We store each player's secret when they start the game.
-      // For now, we detect win by checking the opponent's stored secret.
       const opponentId =
         String(playerId) === String(game.hostId) ? game.guestId : game.hostId;
       const opponentSecret =
@@ -164,39 +341,70 @@ export const registerSocketHandlers = (io) => {
           ? game.guestSecretNumber
           : game.hostSecretNumber;
 
-      const isWinner =
-        opponentSecret && normalizedGuess === String(opponentSecret).trim();
-
       // Record the guess
       game.guesses.push({ playerId: String(playerId), guess: normalizedGuess });
 
-      if (isWinner) {
-        // ── Game over ──
-        game.status = "finished";
-        game.winner = String(playerId);
-        game.loser = String(opponentId);
-        game.reason = "guess";
+      // If autoCheck is active, calculate response and submit immediately
+      if (game.autoCheck) {
+        const opponentSecretVal = String(opponentSecret || "").trim();
 
-        const resultPayload = {
-          winnerId: game.winner,
-          loserId: game.loser,
-          reason: "guess",
-          pointsAwarded: 3,
+        let place = 0;
+        let qty = 0;
+        if (opponentSecretVal) {
+          for (let i = 0; i < normalizedGuess.length; i++) {
+            if (normalizedGuess[i] === opponentSecretVal[i]) {
+              place++;
+            }
+            if (opponentSecretVal.includes(normalizedGuess[i])) {
+              qty++;
+            }
+          }
+        }
+
+        const responseEntry = {
+          responderId: String(opponentId),
+          guess: normalizedGuess,
+          place: Number(place),
+          qty: Number(qty),
+          forPlayerId: String(playerId),
         };
 
-        io.to(game.hostId.toString()).emit("game-result", resultPayload);
-        io.to(game.guestId.toString()).emit("game-result", resultPayload);
+        game.responses.push(responseEntry);
 
-        activeGames.delete(gameId);
-        void persistGameResult(game);
+        // Check if round should end
+        const ended = checkRoundEnd(io, game, gameId);
+        if (ended) return;
+
+        // Transition turn back to guess phase for the opponent
+        game.phase = "guess";
+        game.currentTurn = String(opponentId);
+        game.pendingGuessFor = null;
+
+        startServerTimer(io, gameId);
+
+        const turnPayload = {
+          phase: game.phase,
+          currentTurn: game.currentTurn,
+          latestResponse: responseEntry,
+          guesses: game.guesses,
+          responses: game.responses,
+          guessingTimer: game.guessingTimer,
+          responseTimer: game.responseTimer,
+          autoCheck: game.autoCheck,
+        };
+
+        io.to(game.hostId.toString()).emit("turn-updated", turnPayload);
+        io.to(game.guestId.toString()).emit("turn-updated", turnPayload);
         return;
       }
 
-      // ── Not a winner: switch to response phase ──
+      // ── Not autoCheck: switch to response phase ──
       // The OTHER player (opponent) must respond to this guess
       game.pendingGuessFor = String(playerId); // who guessed
       game.phase = "response";
       game.currentTurn = String(opponentId);   // opponent must respond
+
+      startServerTimer(io, gameId);
 
       const turnPayload = {
         phase: game.phase,
@@ -208,6 +416,7 @@ export const registerSocketHandlers = (io) => {
         responses: game.responses,
         guessingTimer: game.guessingTimer,
         responseTimer: game.responseTimer,
+        autoCheck: game.autoCheck,
       };
 
       io.to(game.hostId.toString()).emit("turn-updated", turnPayload);
@@ -243,11 +452,17 @@ export const registerSocketHandlers = (io) => {
 
       game.responses.push(responseEntry);
 
+      // Check if round should end
+      const ended = checkRoundEnd(io, game, gameId);
+      if (ended) return;
+
       // ── After responding, the RESPONDER becomes the next GUESSER ──
       // Cycle: Host guesses → Guest responds → Guest guesses → Host responds → ...
       game.phase = "guess";
       game.currentTurn = String(playerId); // The responder now guesses
       game.pendingGuessFor = null;
+
+      startServerTimer(io, gameId);
 
       const turnPayload = {
         phase: game.phase,
@@ -257,6 +472,7 @@ export const registerSocketHandlers = (io) => {
         responses: game.responses,
         guessingTimer: game.guessingTimer,
         responseTimer: game.responseTimer,
+        autoCheck: game.autoCheck,
       };
 
       io.to(game.hostId.toString()).emit("turn-updated", turnPayload);
@@ -281,31 +497,7 @@ export const registerSocketHandlers = (io) => {
     // Timer expired — forfeit that player's turn (or forfeit game)
     // ────────────────────────────────────────────────
     socket.on("timer-expired", ({ gameId, playerId }) => {
-      const game = activeGames.get(gameId);
-      if (!game || game.status !== "active") return;
-      if (String(game.currentTurn) !== String(playerId)) return;
-
-      // Treat timer expiry as a forfeit (loss)
-      const opponentId =
-        String(playerId) === String(game.hostId) ? game.guestId : game.hostId;
-
-      game.status = "finished";
-      game.winner = String(opponentId);
-      game.loser = String(playerId);
-      game.reason = "timeout";
-
-      const resultPayload = {
-        winnerId: game.winner,
-        loserId: game.loser,
-        reason: "timeout",
-        pointsAwarded: 3,
-      };
-
-      io.to(game.hostId.toString()).emit("game-result", resultPayload);
-      io.to(game.guestId.toString()).emit("game-result", resultPayload);
-
-      activeGames.delete(gameId);
-      void persistGameResult(game);
+      triggerForfeit(io, gameId, playerId);
     });
 
     // ────────────────────────────────────────────────
@@ -322,6 +514,7 @@ export const registerSocketHandlers = (io) => {
 
         const winnerId =
           String(playerId) === String(game.hostId) ? game.guestId : game.hostId;
+        clearServerTimer(game);
         game.status = "finished";
         game.winner = String(winnerId);
         game.loser = String(playerId);
@@ -358,6 +551,30 @@ export const registerSocketHandlers = (io) => {
     });
 
     // ────────────────────────────────────────────────
+    // Send Chat Message
+    // ────────────────────────────────────────────────
+    socket.on("send-chat-message", ({ gameId, message }) => {
+      const game = activeGames.get(gameId);
+      if (!game) return;
+
+      const opponentId =
+        String(socket.userId) === String(game.hostId) ? game.guestId : game.hostId;
+
+      // Record message to in-memory game history
+      if (!game.chat) game.chat = [];
+      game.chat.push({
+        senderId: String(socket.userId),
+        message: message,
+        timestamp: new Date(),
+      });
+
+      io.to(opponentId.toString()).emit("chat-message", {
+        senderId: socket.userId,
+        message: message,
+      });
+    });
+
+    // ────────────────────────────────────────────────
     // Disconnect
     // ────────────────────────────────────────────────
     socket.on("disconnect", () => {
@@ -371,24 +588,49 @@ export const registerSocketHandlers = (io) => {
 const persistGameResult = async (game) => {
   try {
     const gameId = `game-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+    const isDraw = Boolean(game.isDraw);
+
     await GameHistory.create({
       gameId,
       players: [game.hostId, game.guestId],
-      winner: game.winner,
-      loser: game.loser,
-      reason: game.reason,
-      pointsAwarded: 3,
-      startedAt: game.startedAt,
+      winner: isDraw ? undefined : game.winner,
+      loser: isDraw ? undefined : game.loser,
+      isDraw,
+      reason: game.reason || "guess",
+      pointsAwarded: isDraw ? 0 : 3,
+      guesses: game.guesses || [],
+      responses: game.responses || [],
+      chat: game.chat || [],
+      hostId: game.hostId,
+      guestId: game.guestId,
+      hostSecretNumber: game.hostSecretNumber || "",
+      guestSecretNumber: game.guestSecretNumber || "",
+      autoCheck: game.autoCheck || false,
+      guessingTimer: game.guessingTimer || 3,
+      responseTimer: game.responseTimer || 3,
+      startedAt: game.startedAt || new Date(),
       endedAt: new Date(),
     });
 
-    await User.findByIdAndUpdate(game.winner, {
-      $inc: { "stats.points": 3, "stats.wins": 1, "stats.totalGames": 1 },
-    });
-
-    await User.findByIdAndUpdate(game.loser, {
-      $inc: { "stats.losses": 1, "stats.totalGames": 1 },
-    });
+    if (isDraw) {
+      await User.findByIdAndUpdate(game.hostId, {
+        $inc: { "stats.totalGames": 1 },
+      });
+      await User.findByIdAndUpdate(game.guestId, {
+        $inc: { "stats.totalGames": 1 },
+      });
+    } else {
+      if (game.winner) {
+        await User.findByIdAndUpdate(game.winner, {
+          $inc: { "stats.points": 3, "stats.wins": 1, "stats.totalGames": 1 },
+        });
+      }
+      if (game.loser) {
+        await User.findByIdAndUpdate(game.loser, {
+          $inc: { "stats.losses": 1, "stats.totalGames": 1 },
+        });
+      }
+    }
   } catch (error) {
     console.error("Failed to persist game result", error);
   }

@@ -11,26 +11,71 @@ const gameHistorySchema = new mongoose.Schema(
     players: [
       {
         type: mongoose.Schema.Types.ObjectId,
-        ref: "UserModel",
+        ref: "User",
         required: true,
       },
     ],
     winner: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: "UserModel",
-      required: true,
+      ref: "User",
     },
     loser: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: "UserModel",
-      required: true,
+      ref: "User",
+    },
+    isDraw: {
+      type: Boolean,
+      default: false,
     },
     reason: {
       type: String,
-      enum: ["guess", "resign"],
+      enum: ["guess", "resign", "timeout", "draw"],
       default: "guess",
     },
     pointsAwarded: {
+      type: Number,
+      default: 3,
+    },
+    guesses: {
+      type: Array,
+      default: [],
+    },
+    responses: {
+      type: Array,
+      default: [],
+    },
+    chat: [
+      {
+        senderId: String,
+        message: String,
+        timestamp: { type: Date, default: Date.now },
+      },
+    ],
+    hostId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+    },
+    guestId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+    },
+    hostSecretNumber: {
+      type: String,
+      default: "",
+    },
+    guestSecretNumber: {
+      type: String,
+      default: "",
+    },
+    autoCheck: {
+      type: Boolean,
+      default: false,
+    },
+    guessingTimer: {
+      type: Number,
+      default: 3,
+    },
+    responseTimer: {
       type: Number,
       default: 3,
     },
