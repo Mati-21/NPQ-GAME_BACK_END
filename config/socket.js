@@ -5,7 +5,7 @@ import { registerSocketHandlers } from "../Sockets/index.js";
 export const initSocket = (server, app) => {
   const io = new Server(server, {
     cors: {
-      origin: "http://localhost:5173",
+      origin: ["http://localhost:5173", "https://npq-game-front-end.vercel.app"],
       credentials: true,
     },
     transports: ["websocket"],
