@@ -32,7 +32,7 @@ app.use(cookieParser());
 // cors
 app.use(
   cors({
-    origin: ["http://localhost:5173", "https://npq-game-front-end.vercel.app"],
+    origin: ["http://localhost:5173", "https://npq-game-front-end.vercel.app", "https://npq-game-front-end-git-main-mati-21s-projects.vercel.app"],
     credentials: true,
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
     allowedHeaders: ["Content-Type", "Authorization"],
