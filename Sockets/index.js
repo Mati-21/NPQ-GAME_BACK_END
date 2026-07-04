@@ -283,6 +283,8 @@ export const registerSocketHandlers = (io) => {
         const game = buildGameState(hostId, guestId, guessingTimer, responseTimer, autoCheck);
         // Store the host's secret number so we can check when guest guesses
         game.hostSecretNumber = String(secretNumber || "").trim();
+        // Guest secret will be registered via register-secret event
+        game.guestSecretNumber = "";
         activeGames.set(sessionKey, game);
 
         // Clean up lobby ready-state since game is now starting
