@@ -62,6 +62,46 @@ const checkRoundEnd = (io, game, gameId) => {
     );
 
     if (hasHostGuessedCorrect || hasGuestGuessedCorrect) {
+      // Ensure response is recorded for the winning guess before ending game
+      const lastGuess = game.guesses[game.guesses.length - 1];
+      if (lastGuess) {
+        const existingResponse = game.responses.find(
+          r => r.guess === lastGuess.guess && r.forPlayerId === lastGuess.playerId
+        );
+        
+        if (!existingResponse) {
+          // Calculate and record the response for the winning guess
+          const opponentSecret = String(lastGuess.playerId) === String(game.hostId)
+            ? game.guestSecretNumber
+            : game.hostSecretNumber;
+          const opponentId = String(lastGuess.playerId) === String(game.hostId)
+            ? game.guestId
+            : game.hostId;
+          
+          const opponentSecretVal = String(opponentSecret || "").trim();
+          let place = 0;
+          let qty = 0;
+          if (opponentSecretVal) {
+            for (let i = 0; i < lastGuess.guess.length; i++) {
+              if (lastGuess.guess[i] === opponentSecretVal[i]) {
+                place++;
+              }
+              if (opponentSecretVal.includes(lastGuess.guess[i])) {
+                qty++;
+              }
+            }
+          }
+          
+          game.responses.push({
+            responderId: String(opponentId),
+            guess: lastGuess.guess,
+            place: Number(place),
+            qty: Number(qty),
+            forPlayerId: lastGuess.playerId,
+          });
+        }
+      }
+
       clearServerTimer(game);
       game.status = "finished";
 
