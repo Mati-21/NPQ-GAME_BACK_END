@@ -18,14 +18,21 @@ const lobbyStates = new Map();
  *  - responses: [{ responderId, guess, place, qty, forPlayerId }]
  *  - guessingTimer / responseTimer: minutes configured by host
  */
-const buildGameState = (hostId, guestId, guessingTimer, responseTimer, autoCheck) => ({
+const buildGameState = (
+  hostId,
+  guestId,
+  guessingTimer,
+  responseTimer,
+  autoCheck,
+) => ({
   hostId,
   guestId,
   startedAt: new Date(),
   status: "active",
   phase: "guess",
-  currentTurn: hostId,       // Host ALWAYS guesses first
-  pendingGuessFor: null,     // set when a guess is submitted
+  currentTurn: hostId, // Host ALWAYS guesses first
+  currentRound: 1,
+  pendingGuessFor: null, // set when a guess is submitted
   guessingTimer: Number(guessingTimer) || 3,
   responseTimer: Number(responseTimer) || 3,
   autoCheck: Boolean(autoCheck),
@@ -45,28 +52,44 @@ const clearServerTimer = (game) => {
   }
 };
 
+const getRoundGuessForPlayer = (game, playerId, round = game.currentRound) =>
+  game.guesses.find(
+    (g) =>
+      String(g.playerId) === String(playerId) &&
+      Number(g.round || 1) === Number(round),
+  );
+
+const getCurrentRoundCorrectness = (game) => {
+  const hostGuess = getRoundGuessForPlayer(game, game.hostId);
+  const guestGuess = getRoundGuessForPlayer(game, game.guestId);
+
+  return {
+    hostGuess,
+    guestGuess,
+    isRoundComplete: Boolean(hostGuess && guestGuess),
+    hostCorrect:
+      Boolean(hostGuess) &&
+      String(hostGuess.guess).trim() ===
+        String(game.guestSecretNumber || "").trim(),
+    guestCorrect:
+      Boolean(guestGuess) &&
+      String(guestGuess.guess).trim() ===
+        String(game.hostSecretNumber || "").trim(),
+  };
+};
+
 const checkRoundEnd = (io, game, gameId) => {
-  const hostGuesses = game.guesses.filter((g) => g.playerId === String(game.hostId)).length;
-  const guestGuesses = game.guesses.filter((g) => g.playerId === String(game.guestId)).length;
+  const { hostCorrect, guestCorrect, isRoundComplete } =
+    getCurrentRoundCorrectness(game);
 
-  if (hostGuesses === guestGuesses) {
-    const hasHostGuessedCorrect = game.guesses.some(
-      (g) =>
-        String(g.playerId) === String(game.hostId) &&
-        String(g.guess).trim() === String(game.guestSecretNumber || "").trim()
-    );
-    const hasGuestGuessedCorrect = game.guesses.some(
-      (g) =>
-        String(g.playerId) === String(game.guestId) &&
-        String(g.guess).trim() === String(game.hostSecretNumber || "").trim()
-    );
-
-    if (hasHostGuessedCorrect || hasGuestGuessedCorrect) {
+  // Only end the game when both players have guessed in the same round.
+  if (isRoundComplete) {
+    if (hostCorrect || guestCorrect) {
       clearServerTimer(game);
       game.status = "finished";
 
       let resultPayload;
-      if (hasHostGuessedCorrect && hasGuestGuessedCorrect) {
+      if (hostCorrect && guestCorrect) {
         game.isDraw = true;
         game.reason = "draw";
         resultPayload = {
@@ -76,7 +99,7 @@ const checkRoundEnd = (io, game, gameId) => {
           reason: "draw",
           pointsAwarded: 0,
         };
-      } else if (hasHostGuessedCorrect) {
+      } else if (hostCorrect) {
         game.winner = String(game.hostId);
         game.loser = String(game.guestId);
         game.reason = "guess";
@@ -98,6 +121,21 @@ const checkRoundEnd = (io, game, gameId) => {
         };
       }
 
+      // Include guesses and responses count in the result
+      resultPayload.totalGuesses = game.guesses.length;
+      resultPayload.totalResponses = game.responses.length;
+      resultPayload.guesses = game.guesses;
+      resultPayload.responses = game.responses;
+      resultPayload.currentRound = game.currentRound;
+
+      console.log("\n========== [SERVER] GAME ENDED ==========");
+      console.log("GameId:", gameId);
+      console.log("Winner:", resultPayload.winnerId, "| Loser:", resultPayload.loserId, "| Draw:", resultPayload.isDraw);
+      console.log("Total Guesses:", game.guesses.length, "| Total Responses:", game.responses.length);
+      console.log("[SERVER] Guesses array:", JSON.stringify(game.guesses, null, 2));
+      console.log("[SERVER] Responses array:", JSON.stringify(game.responses, null, 2));
+      console.log("========================================\n");
+
       io.to(game.hostId.toString()).emit("game-result", resultPayload);
       io.to(game.guestId.toString()).emit("game-result", resultPayload);
 
@@ -109,13 +147,60 @@ const checkRoundEnd = (io, game, gameId) => {
   return false;
 };
 
+const calculateResponse = (guess, secretNumber) => {
+  const normalizedGuess = String(guess || "").trim();
+  const normalizedSecret = String(secretNumber || "").trim();
+
+  let place = 0;
+  let qty = 0;
+
+  if (!normalizedSecret) return { place, qty };
+
+  for (let i = 0; i < normalizedGuess.length; i++) {
+    if (normalizedGuess[i] === normalizedSecret[i]) {
+      place++;
+    }
+    if (normalizedSecret.includes(normalizedGuess[i])) {
+      qty++;
+    }
+  }
+
+  return { place, qty };
+};
+
+const buildResponseEntry = ({
+  responderId,
+  guess,
+  secretNumber,
+  forPlayerId,
+  round,
+}) => {
+  const { place, qty } = calculateResponse(guess, secretNumber);
+
+  return {
+    responderId: String(responderId),
+    guess: String(guess || "").trim(),
+    place,
+    qty,
+    forPlayerId: String(forPlayerId),
+    round: Number(round || 1),
+  };
+};
+
+const advanceRoundIfComplete = (game) => {
+  if (getCurrentRoundCorrectness(game).isRoundComplete) {
+    game.currentRound = Number(game.currentRound || 1) + 1;
+  }
+};
+
 const startServerTimer = (io, gameId) => {
   const game = activeGames.get(gameId);
   if (!game || game.status !== "active") return;
 
   clearServerTimer(game);
 
-  const durationMinutes = game.phase === "guess" ? game.guessingTimer : game.responseTimer;
+  const durationMinutes =
+    game.phase === "guess" ? game.guessingTimer : game.responseTimer;
   const durationMs = durationMinutes * 60 * 1000;
 
   game.timerId = setTimeout(() => {
@@ -178,8 +263,14 @@ export const registerSocketHandlers = (io) => {
           sender: socket.userId,
           type: "Game_request",
         });
-        const populatedNotification = await notification.populate("sender", "username avatar firstName lastName");
-        io.to(toUserId.toString()).emit("new-notification", populatedNotification);
+        const populatedNotification = await notification.populate(
+          "sender",
+          "username avatar firstName lastName",
+        );
+        io.to(toUserId.toString()).emit(
+          "new-notification",
+          populatedNotification,
+        );
       } catch (err) {
         console.error("Error creating game request notification:", err);
       }
@@ -245,7 +336,7 @@ export const registerSocketHandlers = (io) => {
       }
       // Notify the opponent
       io.to(opponentId.toString()).emit("opponent-left-lobby", {
-        wasHost: isHost,           // true → opponent should also remove pending game request
+        wasHost: isHost, // true → opponent should also remove pending game request
         leavingUserId: socket.userId,
       });
     });
@@ -255,11 +346,19 @@ export const registerSocketHandlers = (io) => {
     // ────────────────────────────────────────────────
     socket.on(
       "start-game-session",
-      ({ hostId, guestId, secretNumber, guessingTimer, responseTimer, autoCheck }) => {
+      ({
+        hostId,
+        guestId,
+        secretNumber,
+        guessingTimer,
+        responseTimer,
+        autoCheck,
+      }) => {
         // Only the host socket may start the game
         if (String(socket.userId) !== String(hostId)) {
           socket.emit("start-game-error", {
-            message: "Only the player who sent the game request can start as host.",
+            message:
+              "Only the player who sent the game request can start as host.",
           });
           return;
         }
@@ -280,7 +379,13 @@ export const registerSocketHandlers = (io) => {
           return;
         }
 
-        const game = buildGameState(hostId, guestId, guessingTimer, responseTimer, autoCheck);
+        const game = buildGameState(
+          hostId,
+          guestId,
+          guessingTimer,
+          responseTimer,
+          autoCheck,
+        );
         // Store the host's secret number so we can check when guest guesses
         game.hostSecretNumber = String(secretNumber || "").trim();
         // Guest secret will be registered via register-secret event
@@ -304,6 +409,7 @@ export const registerSocketHandlers = (io) => {
           guessingTimer: game.guessingTimer,
           responseTimer: game.responseTimer,
           autoCheck: game.autoCheck,
+          currentRound: game.currentRound,
         };
 
         // Tell each player their role
@@ -317,7 +423,7 @@ export const registerSocketHandlers = (io) => {
           opponentId: hostId,
           role: "guest",
         });
-      }
+      },
     );
 
     // ────────────────────────────────────────────────
@@ -342,48 +448,29 @@ export const registerSocketHandlers = (io) => {
         String(playerId) === String(game.hostId)
           ? game.guestSecretNumber
           : game.hostSecretNumber;
+      const guessRound = Number(game.currentRound || 1);
 
       // Record the guess
-      game.guesses.push({ playerId: String(playerId), guess: normalizedGuess });
+      game.guesses.push({
+        playerId: String(playerId),
+        guess: normalizedGuess,
+        round: guessRound,
+      });
 
       // If autoCheck is active, calculate response and submit immediately
       if (game.autoCheck) {
         const opponentSecretVal = String(opponentSecret || "").trim();
-
-        let place = 0;
-        let qty = 0;
-        if (opponentSecretVal) {
-          for (let i = 0; i < normalizedGuess.length; i++) {
-            if (normalizedGuess[i] === opponentSecretVal[i]) {
-              place++;
-            }
-            if (opponentSecretVal.includes(normalizedGuess[i])) {
-              qty++;
-            }
-          }
-        }
-
-        const responseEntry = {
+        const responseEntry = buildResponseEntry({
           responderId: String(opponentId),
           guess: normalizedGuess,
-          place: Number(place),
-          qty: Number(qty),
           forPlayerId: String(playerId),
-        };
+          secretNumber: opponentSecretVal,
+          round: guessRound,
+        });
 
         game.responses.push(responseEntry);
 
-        // Check if round should end
-        const ended = checkRoundEnd(io, game, gameId);
-        if (ended) return;
-
-        // Transition turn back to guess phase for the opponent
-        game.phase = "guess";
-        game.currentTurn = String(opponentId);
-        game.pendingGuessFor = null;
-
-        startServerTimer(io, gameId);
-
+        // Emit turn-updated with the latest guess/response first so client displays them
         const turnPayload = {
           phase: game.phase,
           currentTurn: game.currentTurn,
@@ -393,18 +480,80 @@ export const registerSocketHandlers = (io) => {
           guessingTimer: game.guessingTimer,
           responseTimer: game.responseTimer,
           autoCheck: game.autoCheck,
+          currentRound: game.currentRound,
         };
-
         io.to(game.hostId.toString()).emit("turn-updated", turnPayload);
         io.to(game.guestId.toString()).emit("turn-updated", turnPayload);
+
+        // Check if round should end
+        const ended = checkRoundEnd(io, game, gameId);
+        if (ended) return;
+        advanceRoundIfComplete(game);
+
+        // Transition turn back to guess phase for the opponent
+        game.phase = "guess";
+        game.currentTurn = String(opponentId);
+        game.pendingGuessFor = null;
+
+        startServerTimer(io, gameId);
+
+        const nextTurnPayload = {
+          phase: game.phase,
+          currentTurn: game.currentTurn,
+          latestResponse: responseEntry,
+          guesses: game.guesses,
+          responses: game.responses,
+          guessingTimer: game.guessingTimer,
+          responseTimer: game.responseTimer,
+          autoCheck: game.autoCheck,
+          currentRound: game.currentRound,
+        };
+
+        io.to(game.hostId.toString()).emit("turn-updated", nextTurnPayload);
+        io.to(game.guestId.toString()).emit("turn-updated", nextTurnPayload);
         return;
       }
 
       // ── Not autoCheck: switch to response phase ──
       // The OTHER player (opponent) must respond to this guess
+      const { hostCorrect, guestCorrect, isRoundComplete } =
+        getCurrentRoundCorrectness(game);
+
+      // In manual mode, the second guess completes the round. If either player
+      // is correct, calculate the second guess response on the server and end now.
+      if (isRoundComplete && (hostCorrect || guestCorrect)) {
+        const responseEntry = buildResponseEntry({
+          responderId: String(opponentId),
+          guess: normalizedGuess,
+          forPlayerId: String(playerId),
+          secretNumber: opponentSecret,
+          round: guessRound,
+        });
+
+        game.responses.push(responseEntry);
+
+        // Emit turn-updated first so client displays the last guess/response
+        const turnPayload = {
+          phase: game.phase,
+          currentTurn: game.currentTurn,
+          latestResponse: responseEntry,
+          guesses: game.guesses,
+          responses: game.responses,
+          guessingTimer: game.guessingTimer,
+          responseTimer: game.responseTimer,
+          autoCheck: game.autoCheck,
+          currentRound: game.currentRound,
+        };
+        io.to(game.hostId.toString()).emit("turn-updated", turnPayload);
+        io.to(game.guestId.toString()).emit("turn-updated", turnPayload);
+
+        const ended = checkRoundEnd(io, game, gameId);
+        if (ended) return;
+      }
+
       game.pendingGuessFor = String(playerId); // who guessed
       game.phase = "response";
-      game.currentTurn = String(opponentId);   // opponent must respond
+      game.currentTurn = String(opponentId); // opponent must respond
 
       startServerTimer(io, gameId);
 
@@ -419,6 +568,7 @@ export const registerSocketHandlers = (io) => {
         guessingTimer: game.guessingTimer,
         responseTimer: game.responseTimer,
         autoCheck: game.autoCheck,
+        currentRound: game.currentRound,
       };
 
       io.to(game.hostId.toString()).emit("turn-updated", turnPayload);
@@ -441,22 +591,57 @@ export const registerSocketHandlers = (io) => {
       }
 
       // The guess that is being responded to
-      const guessBeingAnswered = game.guesses[game.guesses.length - 1]?.guess || "";
+      const guessEntry = game.guesses[game.guesses.length - 1];
+      const guessBeingAnswered = guessEntry?.guess || "";
+      const responseRound = Number(guessEntry?.round || game.currentRound || 1);
       const originalGuesserId = game.pendingGuessFor; // who originally guessed
+      const secretBeingGuessed =
+        String(originalGuesserId) === String(game.hostId)
+          ? game.guestSecretNumber
+          : game.hostSecretNumber;
+      const actualResponse = calculateResponse(
+        guessBeingAnswered,
+        secretBeingGuessed,
+      );
+
+      console.log("Manual response checked before continuing:", {
+        gameId,
+        guess: guessBeingAnswered,
+        secret: secretBeingGuessed,
+        submitted: { place: Number(place), qty: Number(qty) },
+        actual: actualResponse,
+      });
 
       const responseEntry = {
         responderId: String(playerId),
         guess: guessBeingAnswered,
-        place: Number(place),
-        qty: Number(qty),
+        place: actualResponse.place,
+        qty: actualResponse.qty,
         forPlayerId: originalGuesserId, // the guesser receives this response
+        round: responseRound,
       };
 
       game.responses.push(responseEntry);
 
+      // Emit turn-updated first so client displays the last guess/response
+      const intermediatePayload = {
+        phase: game.phase,
+        currentTurn: game.currentTurn,
+        latestResponse: responseEntry,
+        guesses: game.guesses,
+        responses: game.responses,
+        guessingTimer: game.guessingTimer,
+        responseTimer: game.responseTimer,
+        autoCheck: game.autoCheck,
+        currentRound: game.currentRound,
+      };
+      io.to(game.hostId.toString()).emit("turn-updated", intermediatePayload);
+      io.to(game.guestId.toString()).emit("turn-updated", intermediatePayload);
+
       // Check if round should end
       const ended = checkRoundEnd(io, game, gameId);
       if (ended) return;
+      advanceRoundIfComplete(game);
 
       // ── After responding, the RESPONDER becomes the next GUESSER ──
       // Cycle: Host guesses → Guest responds → Guest guesses → Host responds → ...
@@ -475,6 +660,7 @@ export const registerSocketHandlers = (io) => {
         guessingTimer: game.guessingTimer,
         responseTimer: game.responseTimer,
         autoCheck: game.autoCheck,
+        currentRound: game.currentRound,
       };
 
       io.to(game.hostId.toString()).emit("turn-updated", turnPayload);
@@ -560,7 +746,9 @@ export const registerSocketHandlers = (io) => {
       if (!game) return;
 
       const opponentId =
-        String(socket.userId) === String(game.hostId) ? game.guestId : game.hostId;
+        String(socket.userId) === String(game.hostId)
+          ? game.guestId
+          : game.hostId;
 
       // Record message to in-memory game history
       if (!game.chat) game.chat = [];
