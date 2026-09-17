@@ -22,7 +22,7 @@ export const Register = async (req, res, next) => {
       maxAge: 1000 * 60 * 60,
     });
 
-    res.status(201).json({ user });
+    res.status(201).json({ user, token });
   } catch (error) {
     next(error);
   }
@@ -48,7 +48,7 @@ export const login = async (req, res, next) => {
     });
 
     console.log("Hallo");
-    res.status(200).json({ user });
+    res.status(200).json({ user, token });
   } catch (error) {
     next(error); // 🔥 THIS IS THE KEY
   }

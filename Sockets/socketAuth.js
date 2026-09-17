@@ -4,7 +4,10 @@ import jwt from "jsonwebtoken";
 export const socketAuthMiddleware = (socket, next) => {
   try {
     const cookies = cookie.parse(socket.handshake.headers.cookie || "");
-    const token = cookies.Access_token;
+    const token =
+      cookies.Access_token ||
+      socket.handshake.auth?.token ||
+      socket.handshake.headers?.authorization?.split(" ")[1];
 
     if (!token) {
       return next(new Error("Authentication error"));
